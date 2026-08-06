@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Isolation stress: opaque red/blue circles inside group android:alpha=0.5.
+  Correct Android: draw opaque paths offscreen, then apply group alpha onto BG.
+  Non-isolated bake: each path gets fillAlpha*=0.5 drawn on BG — overlap turns purple vs blue-gray.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group android:alpha="0.5">
+        <path
+            android:fillColor="#FFFF0000"
+            android:pathData="M8,54 a32,32 0 1,0 64,0 a32,32 0 1,0 -64,0"/>
+        <path
+            android:fillColor="#FF0000FF"
+            android:pathData="M36,54 a32,32 0 1,0 64,0 a32,32 0 1,0 -64,0"/>
+    </group>
+</vector>

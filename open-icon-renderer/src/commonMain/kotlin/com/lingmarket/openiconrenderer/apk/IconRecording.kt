@@ -5,7 +5,7 @@ import com.lingmarket.openiconrenderer.vector.VectorPath
 
 /**
  * Parsed launcher-icon geometry / bitmaps, independent of output size.
- * Graphite-inspired: record once (resolve), render many sizes.
+ * Record once (resolve), render many sizes (re-tessellate per size).
  */
 internal sealed class IconRecording {
     abstract val iconRef: String?
@@ -37,6 +37,8 @@ internal sealed class IconRecording {
             val paths: List<VectorPath>,
             val viewportWidth: Float,
             val viewportHeight: Float,
+            /** Android `<group android:alpha>` applied as a whole-layer opacity (isolation). */
+            val layerAlpha: Float = 1f,
         ) : Foreground()
         data class Bitmap(val bitmap: RgbaBitmap) : Foreground()
         data object None : Foreground()

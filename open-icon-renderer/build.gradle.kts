@@ -38,9 +38,29 @@ kotlin {
             create("libwebp") {
                 defFile(project.file("src/nativeInterop/cinterop/libwebp.def"))
             }
+            create("oir_simd") {
+                defFile(project.file("src/nativeInterop/cinterop/oir_simd.def"))
+                includeDirs(project.file("src/nativeInterop/cinterop"))
+            }
         }
         target.binaries.all {
             linkerOpts("-L/usr/lib", "-L/usr/lib64", "-ldeflate", "-lwebp")
+        }
+    }
+
+    // linuxX64: unlock popcnt / SSE4.2 / AVX2 for LLVM codegen (default Konan baseline is SSE2).
+    linuxX64 {
+        compilations.configureEach {
+            compileTaskProvider.configure {
+                compilerOptions.freeCompilerArgs.add(
+                    "-Xoverride-konan-properties=" +
+                        "targetCpu.linux_x64=x86-64-v3;" +
+                        "targetCpuFeatures.linux_x64=" +
+                        "+aes,+avx,+avx2,+bmi,+bmi2,+cmov,+crc32,+cx16,+cx8,+fma,+fxsr," +
+                        "+lzcnt,+mmx,+movbe,+pclmul,+popcnt,+rdrnd,+rdseed,+sahf," +
+                        "+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+x87,+xsave,+xsaveopt",
+                )
+            }
         }
     }
 

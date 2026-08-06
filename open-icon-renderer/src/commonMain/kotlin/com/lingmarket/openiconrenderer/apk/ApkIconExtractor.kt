@@ -427,7 +427,7 @@ internal class ApkIconExtractor(
                 "foreground" -> {
                     val vec = tryResolveVectorElement(child, depth + 1)
                     fg = if (vec != null) {
-                        IconRecording.Foreground.Vector(vec.paths, vec.vpW, vec.vpH)
+                        IconRecording.Foreground.Vector(vec.paths, vec.vpW, vec.vpH, vec.layerAlpha)
                     } else {
                         val bmp = resolveDrawableElement(child, depth + 1)?.bitmap
                         if (bmp != null) IconRecording.Foreground.Bitmap(bmp)
@@ -471,13 +471,30 @@ internal class ApkIconExtractor(
 
         when (val fg = recording.foreground) {
             is IconRecording.Foreground.Vector -> {
-                val fgLayer = RgbaBitmap.filled(outputSize, outputSize, 0)
-                stages.measureOr("tess") {
-                    // Tess + coverage + shade happen inside rasterizer; stage name matches plan.
-                    VectorRasterizer.rasterizeOnto(fgLayer, fg.paths, fg.viewportWidth, fg.viewportHeight)
+                // Group opacity (<group android:alpha>) needs an offscreen layer: draw children,
+                // then apply layer alpha, then SrcOver onto BG. Baking α into each path is wrong
+                // when opaque children overlap. Plain vectors (layerAlpha≈1) stay direct-on-BG.
+                val needsIsolation = options.isolateForeground || fg.layerAlpha < 0.999f
+                if (needsIsolation) {
+                    val fgLayer = RgbaBitmap.filled(outputSize, outputSize, 0)
+                    stages.measureOr("tess") {
+                        VectorRasterizer.rasterizeOnto(
+                            fgLayer, fg.paths, fg.viewportWidth, fg.viewportHeight,
+                        )
+                    }
+                    if (fg.layerAlpha < 0.999f) {
+                        RgbaCanvas.scaleStraightAlpha(fgLayer, fg.layerAlpha)
+                    }
+                    stages.measureOr("composite") {
+                        RgbaCanvas.composite(canvas, fgLayer)
+                    }
+                } else {
+                    stages.measureOr("tess") {
+                        VectorRasterizer.rasterizeOnto(
+                            canvas, fg.paths, fg.viewportWidth, fg.viewportHeight,
+                        )
+                    }
                 }
-                stages?.start("resolve")
-                RgbaCanvas.composite(canvas, fgLayer)
             }
             is IconRecording.Foreground.Bitmap -> {
                 val overlay = RgbaCanvas.resize(fg.bitmap, outputSize, outputSize)
@@ -619,6 +636,7 @@ internal class ApkIconExtractor(
         val paths: List<VectorPath>,
         val vpW: Float,
         val vpH: Float,
+        val layerAlpha: Float = 1f,
     )
 
     /** Resolve a drawable element to vector geometry without rasterizing. */
@@ -687,9 +705,20 @@ internal class ApkIconExtractor(
         val vpW = attr(node, "viewportWidth")?.let { parseAndroidFloat(it) } ?: return null
         val vpH = attr(node, "viewportHeight")?.let { parseAndroidFloat(it) } ?: return null
         if (vpW <= 0f || vpH <= 0f) return null
-        val paths = collectVectorPaths(node)
+        // Single root <group android:alpha> → true layer opacity (Android offscreen + alpha).
+        val only = node.children.singleOrNull()
+        val layerAlpha: Float
+        val pathRoot: XmlNode
+        if (only != null && only.tag == "group") {
+            layerAlpha = (attr(only, "alpha")?.let { parseAndroidFloat(it) } ?: 1f).coerceIn(0f, 1f)
+            pathRoot = only
+        } else {
+            layerAlpha = 1f
+            pathRoot = node
+        }
+        val paths = collectVectorPaths(pathRoot)
         if (paths.isEmpty() || paths.none { it.fill != null }) return null
-        return VectorDrawable(paths, vpW, vpH)
+        return VectorDrawable(paths, vpW, vpH, layerAlpha)
     }
 
     private fun resolveDrawableElement(node: XmlNode, depth: Int): ExtractResult? {
@@ -733,8 +762,8 @@ internal class ApkIconExtractor(
                     val fill = resolveFillPaint(attr(child, "fillColor"))
                     val stroke = attr(child, "strokeColor")?.let { resolveColorValue(it) }
                     val strokeWidth = attr(child, "strokeWidth")?.let { parseAndroidFloat(it) } ?: 0f
-                    val fillAlpha = attr(child, "fillAlpha")?.toFloatOrNull() ?: 1f
-                    val strokeAlpha = attr(child, "strokeAlpha")?.toFloatOrNull() ?: 1f
+                    val fillAlpha = attr(child, "fillAlpha")?.let { parseAndroidFloat(it) } ?: 1f
+                    val strokeAlpha = attr(child, "strokeAlpha")?.let { parseAndroidFloat(it) } ?: 1f
                     val fillTypeRaw = attr(child, "fillType")?.trim()?.lowercase()
                     val fillType = when (fillTypeRaw) {
                         "1", "evenodd", "even_odd", "even-odd" ->
@@ -1018,6 +1047,7 @@ internal class ApkIconExtractor(
         private const val TYPE_FLOAT = 0x04
         private const val TYPE_INT_COLOR_ARGB8 = 0x1c
         private const val TYPE_INT_COLOR_RGB8 = 0x1d
+
         private val DPI_RANK = linkedMapOf(
             "xxxhdpi" to 0,
             "xxhdpi" to 1,

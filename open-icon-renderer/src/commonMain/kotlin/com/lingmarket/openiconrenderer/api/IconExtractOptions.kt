@@ -17,6 +17,12 @@ data class IconExtractOptions(
     val verbose: Boolean = false,
     /** Print per-stage wall times (zip / arsc / resolve / tess / mask / png) to stdout. */
     val profileStages: Boolean = false,
+    /**
+     * When true, adaptive vector FG is drawn on a clear layer then composited (Android-like
+     * isolation). Default false: draw FG directly onto BG (faster; can differ with translucent
+     * overlapping paths).
+     */
+    val isolateForeground: Boolean = false,
 )
 
 data class IconExtractResult(

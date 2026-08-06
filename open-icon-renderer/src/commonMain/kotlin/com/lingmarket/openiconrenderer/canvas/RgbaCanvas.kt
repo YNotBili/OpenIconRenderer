@@ -33,8 +33,59 @@ internal object RgbaCanvas {
             base.pixels.fill(solid)
             return
         }
-        for (i in base.pixels.indices) {
-            base.pixels[i] = blend(base.pixels[i], overlay.pixels[i])
+        compositeRect(base, overlay, 0, 0, base.width - 1, base.height - 1)
+    }
+
+    /** Src-over [overlay] onto [base] for inclusive pixel rect (skips zero-alpha runs). */
+    fun compositeRect(
+        base: RgbaBitmap,
+        overlay: RgbaBitmap,
+        x0: Int,
+        y0: Int,
+        x1: Int,
+        y1: Int,
+    ) {
+        require(base.width == overlay.width && base.height == overlay.height)
+        val w = base.width
+        val bs = base.pixels
+        val ov = overlay.pixels
+        val left = x0.coerceAtLeast(0)
+        val right = x1.coerceAtMost(w - 1)
+        val top = y0.coerceAtLeast(0)
+        val bottom = y1.coerceAtMost(base.height - 1)
+        if (left > right || top > bottom) return
+        for (y in top..bottom) {
+            var i = y * w + left
+            val rowEnd = y * w + right
+            while (i <= rowEnd) {
+                val s = ov[i]
+                if (s == 0) {
+                    i++
+                    continue
+                }
+                val sa = (s ushr 24) and 0xFF
+                if (sa == 255) {
+                    bs[i] = s
+                } else {
+                    bs[i] = blend(bs[i], s)
+                }
+                i++
+            }
+        }
+    }
+
+    /** Multiply each pixel's straight alpha by [factor] (RGB unchanged). */
+    fun scaleStraightAlpha(bitmap: RgbaBitmap, factor: Float) {
+        val f = factor.coerceIn(0f, 1f)
+        if (f >= 0.999f) return
+        val pixels = bitmap.pixels
+        val mul = (f * 255f + 0.5f).toInt().coerceIn(0, 255)
+        for (i in pixels.indices) {
+            val p = pixels[i]
+            val a = (p ushr 24) and 0xFF
+            if (a == 0) continue
+            val na = (a * mul + 127) / 255
+            pixels[i] = (na shl 24) or (p and 0x00FFFFFF)
         }
     }
 

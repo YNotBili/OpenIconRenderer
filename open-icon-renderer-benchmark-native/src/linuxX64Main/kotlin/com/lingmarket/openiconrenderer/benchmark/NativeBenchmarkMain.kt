@@ -20,13 +20,16 @@ private fun extractOptions(
     size: Int,
     preferAdaptive: Boolean,
     verbose: Boolean = false,
+    isolateForeground: Boolean = false,
+    mask: IconMask = IconMask.CIRCLE,
 ) = IconExtractOptions(
     outputSize = size,
     densityDpi = 480,
     sdkVersion = 35,
     preferAdaptive = preferAdaptive,
-    mask = IconMask.CIRCLE,
+    mask = mask,
     verbose = verbose,
+    isolateForeground = isolateForeground,
 )
 
 @OptIn(ExperimentalForeignApi::class)
@@ -46,13 +49,20 @@ fun main(args: Array<String>) {
         }
         "render" -> {
             val apkPath = args.getOrNull(1)
-                ?: error("Usage: ... render <apk> <size> [out.png] [--stages]")
+                ?: error("Usage: ... render <apk> <size> [out.png] [--stages] [--isolate] [--no-mask]")
             val size = args.getOrNull(2)?.toIntOrNull()
-                ?: error("Usage: ... render <apk> <size> [out.png] [--stages]")
+                ?: error("Usage: ... render <apk> <size> [out.png] [--stages] [--isolate] [--no-mask]")
             val rest = args.drop(3)
             val stages = rest.contains("--stages")
-            val outPath = rest.firstOrNull { it != "--stages" } ?: "/dev/null"
-            onceRender(apkPath, size, outPath, profileStages = stages)
+            val isolate = rest.contains("--isolate")
+            val noMask = rest.contains("--no-mask")
+            val outPath = rest.firstOrNull { !it.startsWith("--") } ?: "/dev/null"
+            onceRender(
+                apkPath, size, outPath,
+                profileStages = stages,
+                isolateForeground = isolate,
+                mask = if (noMask) IconMask.NONE else IconMask.CIRCLE,
+            )
             return
         }
         "stages" -> {
@@ -87,10 +97,18 @@ private fun onceInspect(apkPath: String) {
 }
 
 @OptIn(ExperimentalForeignApi::class)
-private fun onceRender(apkPath: String, size: Int, outPath: String, profileStages: Boolean = false) {
+private fun onceRender(
+    apkPath: String,
+    size: Int,
+    outPath: String,
+    profileStages: Boolean = false,
+    isolateForeground: Boolean = false,
+    mask: IconMask = IconMask.CIRCLE,
+) {
     val result = OpenIconRenderer.extractLauncherIcon(
         apkPath,
-        extractOptions(size, preferAdaptive = true).copy(profileStages = profileStages),
+        extractOptions(size, preferAdaptive = true, isolateForeground = isolateForeground, mask = mask)
+            .copy(profileStages = profileStages),
     ) ?: error("render failed at $size")
     require(result.pngBytes.isNotEmpty()) { "empty png at $size" }
     writeAllBytes(outPath, result.pngBytes)

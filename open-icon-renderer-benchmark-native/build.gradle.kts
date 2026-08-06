@@ -4,6 +4,18 @@ plugins {
 
 kotlin {
     linuxX64 {
+        compilations.configureEach {
+            compileTaskProvider.configure {
+                compilerOptions.freeCompilerArgs.add(
+                    "-Xoverride-konan-properties=" +
+                        "targetCpu.linux_x64=x86-64-v3;" +
+                        "targetCpuFeatures.linux_x64=" +
+                        "+aes,+avx,+avx2,+bmi,+bmi2,+cmov,+crc32,+cx16,+cx8,+fma,+fxsr," +
+                        "+lzcnt,+mmx,+movbe,+pclmul,+popcnt,+rdrnd,+rdseed,+sahf," +
+                        "+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+x87,+xsave,+xsaveopt",
+                )
+            }
+        }
         binaries {
             executable {
                 entryPoint = "com.lingmarket.openiconrenderer.benchmark.main"

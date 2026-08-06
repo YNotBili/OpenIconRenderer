@@ -1,6 +1,8 @@
 package com.lingmarket.openiconrenderer.vector
 
 import com.lingmarket.openiconrenderer.canvas.RgbaBitmap
+import com.lingmarket.openiconrenderer.util.fillLinearLutSpan
+import com.lingmarket.openiconrenderer.util.fillRadialLutSpan
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -39,7 +41,6 @@ internal object VectorRasterizer {
     ) {
         val scaleX = bitmap.width / viewportWidth
         val scaleY = bitmap.height / viewportHeight
-        // Absolute pixel flatten tol: slightly looser at large sizes → fewer edges, tess scales better.
         val pxTol = when {
             bitmap.width >= 1536 -> 0.45f
             bitmap.width >= 768 -> 0.35f
@@ -50,6 +51,14 @@ internal object VectorRasterizer {
             val fill = path.fill ?: continue
             val edges = buildEdges(path.commands, scaleX, scaleY, tol2)
             if (edges.isEmpty()) continue
+            var yMin = edges[0].yMin
+            var yMax = edges[0].yMax
+            for (i in 1 until edges.size) {
+                val e = edges[i]
+                if (e.yMin < yMin) yMin = e.yMin
+                if (e.yMax > yMax) yMax = e.yMax
+            }
+            if (yMax <= 0f || yMin >= bitmap.height) continue
             val sampler = GradientSampler.create(fill, scaleX, scaleY)
             fillAnalytic(bitmap, edges, sampler, path.fillAlpha, path.fillType)
         }
@@ -696,16 +705,9 @@ internal object VectorRasterizer {
                     pixels.fill(c, row + x0, row + x1 + 1)
                     return
                 }
-                // Incremental t along +x (same as colorAt at pixel centers).
-                var t = ((x0 + 0.5f - this.x0) * dx + (y - y0) * dy) * invLen2
+                val t0 = ((x0 + 0.5f - this.x0) * dx + (y - y0) * dy) * invLen2
                 val dt = dx * invLen2
-                var i = row + x0
-                val end = row + x1
-                while (i <= end) {
-                    pixels[i] = lut[(t.coerceIn(0f, 1f) * 255f + 0.5f).toInt().coerceIn(0, 255)]
-                    t += dt
-                    i++
-                }
+                fillLinearLutSpan(pixels, row + x0, x1 - x0 + 1, lut, t0, dt)
             }
         }
 
@@ -721,6 +723,12 @@ internal object VectorRasterizer {
                 return lut[(t.coerceIn(0f, 1f) * 255f + 0.5f).toInt().coerceIn(0, 255)]
             }
             override fun isSemiTransparentPaint(): Boolean = semi
+            override fun fillOpaqueSpan(pixels: IntArray, row: Int, x0: Int, x1: Int, y: Float) {
+                fillRadialLutSpan(
+                    pixels, row + x0, x1 - x0 + 1, lut,
+                    x0Center = x0 + 0.5f, y = y, cx = cx, cy = cy, invR = invR,
+                )
+            }
         }
 
         companion object {

@@ -3,7 +3,7 @@ package com.lingmarket.openiconrenderer.png
 import com.lingmarket.openiconrenderer.canvas.RgbaBitmap
 import com.lingmarket.openiconrenderer.util.compressZlib
 import com.lingmarket.openiconrenderer.util.inflateRawDeflate
-import com.lingmarket.openiconrenderer.util.platformAdler32
+import com.lingmarket.openiconrenderer.util.packArgbToRgbaFilterNone
 import com.lingmarket.openiconrenderer.util.platformCrc32
 
 private fun ByteArray.u32BE(offset: Int): Int =
@@ -127,8 +127,8 @@ internal object PngDecoder {
 }
 
 /**
- * Fast PNG encoder for icons: filter-None + zlib stored blocks streamed into IDAT
- * (no full-frame raw scratch). Adler-32 / CRC-32 via libdeflate on native.
+ * Fast PNG encoder for icons: filter-None + zlib (libdeflate level 3).
+ * Scratch buffers are reused across encodes.
  */
 internal object PngEncoder {
     private val PNG_SIGNATURE = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
@@ -137,22 +137,15 @@ internal object PngEncoder {
     private val TYPE_IEND = byteArrayOf(0x49, 0x45, 0x4E, 0x44)
     private val EMPTY = ByteArray(0)
 
-    /** One scanline scratch: filter byte + RGBA. */
-    private var rowScratch: ByteArray? = null
-    /** Full raw frame for deflated path (grows). */
+    /** Balanced compression (libdeflate / JVM Deflater). */
+    private const val ZLIB_LEVEL = 3
+
+    /** Full raw frame for deflated path (grows, reused). */
     private var rawScratch: ByteArray? = null
     /** Reused final PNG buffer (grows). */
     private var outScratch: ByteArray? = null
 
-    fun encode(bitmap: RgbaBitmap): ByteArray {
-        // Large icons: libdeflate level 1 keeps IDAT small (faster write) vs 16MB stored.
-        // Small icons: stored stream avoids a full-frame raw buffer.
-        return if (bitmap.width * bitmap.height >= 1024 * 1024) {
-            encodeDeflated(bitmap, level = 1)
-        } else {
-            encodeStored(bitmap)
-        }
-    }
+    fun encode(bitmap: RgbaBitmap): ByteArray = encodeDeflated(bitmap, level = ZLIB_LEVEL)
 
     private fun encodeDeflated(bitmap: RgbaBitmap, level: Int): ByteArray {
         val width = bitmap.width
@@ -184,193 +177,7 @@ internal object PngEncoder {
         pos = writeChunk(out, pos, TYPE_IHDR, ihdr, 13)
         pos = writeChunk(out, pos, TYPE_IDAT, idat.bytes, idat.length)
         pos = writeChunk(out, pos, TYPE_IEND, EMPTY, 0)
-        return out.copyOf(pos)
-    }
-
-    private fun packArgbToRgbaFilterNone(pixels: IntArray, raw: ByteArray, width: Int, height: Int) {
-        var o = 0
-        var p = 0
-        for (y in 0 until height) {
-            raw[o++] = 0
-            var x = 0
-            while (x + 4 <= width) {
-                val c0 = pixels[p++]
-                val c1 = pixels[p++]
-                val c2 = pixels[p++]
-                val c3 = pixels[p++]
-                raw[o++] = (c0 shr 16).toByte()
-                raw[o++] = (c0 shr 8).toByte()
-                raw[o++] = c0.toByte()
-                raw[o++] = (c0 ushr 24).toByte()
-                raw[o++] = (c1 shr 16).toByte()
-                raw[o++] = (c1 shr 8).toByte()
-                raw[o++] = c1.toByte()
-                raw[o++] = (c1 ushr 24).toByte()
-                raw[o++] = (c2 shr 16).toByte()
-                raw[o++] = (c2 shr 8).toByte()
-                raw[o++] = c2.toByte()
-                raw[o++] = (c2 ushr 24).toByte()
-                raw[o++] = (c3 shr 16).toByte()
-                raw[o++] = (c3 shr 8).toByte()
-                raw[o++] = c3.toByte()
-                raw[o++] = (c3 ushr 24).toByte()
-                x += 4
-            }
-            while (x < width) {
-                val c = pixels[p++]
-                raw[o++] = (c shr 16).toByte()
-                raw[o++] = (c shr 8).toByte()
-                raw[o++] = c.toByte()
-                raw[o++] = (c ushr 24).toByte()
-                x++
-            }
-        }
-    }
-
-    private fun encodeStored(bitmap: RgbaBitmap): ByteArray {
-        val width = bitmap.width
-        val height = bitmap.height
-        val stride = 1 + width * 4
-        val rawLen = height * stride
-        val maxBlocks = (rawLen + 65534) / 65535
-        val idatLen = 2 + rawLen + maxBlocks * 5 + 4
-        val need = 8 + chunkSize(13) + chunkSize(idatLen) + chunkSize(0)
-
-        var out = outScratch
-        if (out == null || out.size < need) {
-            out = ByteArray(need)
-            outScratch = out
-        }
-
-        var pos = 0
-        PNG_SIGNATURE.copyInto(out, pos)
-        pos += 8
-
-        val ihdr = ByteArray(13)
-        writeU32(ihdr, 0, width)
-        writeU32(ihdr, 4, height)
-        ihdr[8] = 8
-        ihdr[9] = 6
-        pos = writeChunk(out, pos, TYPE_IHDR, ihdr, 13)
-
-        // IDAT header (length patched after streaming)
-        val idatLenPos = pos
-        pos += 4
-        val crcStart = pos
-        TYPE_IDAT.copyInto(out, pos)
-        pos += 4
-        val zlibStart = pos
-
-        // zlib header: 78 01 (stored-friendly)
-        out[pos++] = 0x78
-        out[pos++] = 0x01
-
-        var row = rowScratch
-        if (row == null || row.size < stride) {
-            row = ByteArray(stride)
-            rowScratch = row
-        }
-
-        val pixels = bitmap.pixels
-        var adler = 1
-        var blockOpen = false
-        var blockStart = 0
-        var blockLen = 0
-        var remainingRaw = rawLen
-        var pix = 0
-
-        fun closeBlock(final: Boolean) {
-            if (!blockOpen) return
-            val bfinal = if (final) 1 else 0
-            out[blockStart] = bfinal.toByte()
-            out[blockStart + 1] = (blockLen and 0xFF).toByte()
-            out[blockStart + 2] = ((blockLen shr 8) and 0xFF).toByte()
-            out[blockStart + 3] = (blockLen.inv() and 0xFF).toByte()
-            out[blockStart + 4] = ((blockLen.inv() shr 8) and 0xFF).toByte()
-            blockOpen = false
-            blockLen = 0
-        }
-
-        fun ensureBlock() {
-            if (blockOpen) return
-            blockStart = pos
-            pos += 5 // header filled in closeBlock
-            blockOpen = true
-            blockLen = 0
-        }
-
-        fun writeStored(src: ByteArray, srcLen: Int) {
-            var off = 0
-            while (off < srcLen) {
-                ensureBlock()
-                val room = 65535 - blockLen
-                val n = minOf(room, srcLen - off)
-                src.copyInto(out, pos, off, off + n)
-                pos += n
-                blockLen += n
-                off += n
-                remainingRaw -= n
-                if (blockLen == 65535) closeBlock(final = remainingRaw == 0 && off == srcLen)
-            }
-        }
-
-        for (y in 0 until height) {
-            row[0] = 0
-            var o = 1
-            var x = 0
-            while (x + 4 <= width) {
-                val c0 = pixels[pix++]
-                val c1 = pixels[pix++]
-                val c2 = pixels[pix++]
-                val c3 = pixels[pix++]
-                row[o++] = (c0 shr 16).toByte()
-                row[o++] = (c0 shr 8).toByte()
-                row[o++] = c0.toByte()
-                row[o++] = (c0 ushr 24).toByte()
-                row[o++] = (c1 shr 16).toByte()
-                row[o++] = (c1 shr 8).toByte()
-                row[o++] = c1.toByte()
-                row[o++] = (c1 ushr 24).toByte()
-                row[o++] = (c2 shr 16).toByte()
-                row[o++] = (c2 shr 8).toByte()
-                row[o++] = c2.toByte()
-                row[o++] = (c2 ushr 24).toByte()
-                row[o++] = (c3 shr 16).toByte()
-                row[o++] = (c3 shr 8).toByte()
-                row[o++] = c3.toByte()
-                row[o++] = (c3 ushr 24).toByte()
-                x += 4
-            }
-            while (x < width) {
-                val c = pixels[pix++]
-                row[o++] = (c shr 16).toByte()
-                row[o++] = (c shr 8).toByte()
-                row[o++] = c.toByte()
-                row[o++] = (c ushr 24).toByte()
-                x++
-            }
-            adler = platformAdler32(adler, row, 0, stride)
-            writeStored(row, stride)
-        }
-        if (rawLen == 0) {
-            // empty image: one empty final stored block
-            ensureBlock()
-            closeBlock(final = true)
-        } else {
-            closeBlock(final = true)
-        }
-
-        // Adler-32 trailer
-        writeU32(out, pos, adler)
-        pos += 4
-
-        val actualIdat = pos - zlibStart
-        writeU32(out, idatLenPos, actualIdat)
-        val crc = platformCrc32(0, out, crcStart, 4 + actualIdat)
-        writeU32(out, pos, crc)
-        pos += 4
-
-        pos = writeChunk(out, pos, TYPE_IEND, EMPTY, 0)
+        // Keep scratch for reuse; return a tight copy of the used prefix.
         return out.copyOf(pos)
     }
 
