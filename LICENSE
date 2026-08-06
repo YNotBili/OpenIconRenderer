@@ -1,0 +1,103 @@
+OpenIconRenderer Source-Available License (OIR-SAL) v1.0
+Copyright (c) 2026 RJ
+All Rights Reserved.
+（下称「版权方」）
+
+本软件及随附文档（合称「本软件」）按本许可证授权。使用、复制、修改或分发本软件，
+即表示你接受本许可证全部条款。
+
+本许可证提供两种授权路径：社区授权（免费）与商业授权（付费）。
+
+
+一、社区授权（免费）
+
+在遵守下列条件的前提下，版权方授予你一项全球性、免版税、不可转让、非独占的许可，
+允许你使用、复制、修改、合并、发布与分发本软件（含修改版本）：
+
+1. 开源义务（Copyleft）
+   你对本软件的任何分发（含修改版、衍生作品，以及将其嵌入、捆绑或链接进其他软件后
+   对外提供的情形），必须以本许可证（OIR-SAL）完整附带源代码，使接收方可按本许可
+   证同等条款获得、修改与再分发。不得对本软件施加额外限制，使其无法继续以本许可
+   证开源分发。
+
+2. 版权声明
+   所有副本及实质性部分须保留本版权声明与本许可证全文。
+
+3. 非闭源
+   社区授权不允许将本软件（含修改版）用于闭源产品：即不得在不向用户提供对应源代
+   码、或不允许用户按本许可证再分发的前提下，对外提供包含本软件的产品或服务。
+
+符合社区授权条件的个人与项目可免费使用本软件。
+
+
+二、商业授权（闭源）
+
+若你希望将本软件用于闭源产品（见上一节第 3 款之反义），则必须另行取得版权方的
+书面商业授权。
+
+特别地：若相关产品或服务的月流水（gross revenue / 营业额，按自然月计）超过
+人民币壹仟元整（CNY ¥1,000），且拟闭源使用本软件，则必须取得商业授权并支付授权费。
+具体费率、范围与期限以版权方出具的商业授权协议为准。
+
+月流水不超过 CNY ¥1,000 的项目若仍需闭源使用，亦须联系版权方取得商业授权
+（是否收费由版权方另行约定）。
+
+联系商业授权：QQ 2815968613
+
+
+三、版权方保留权利
+
+1. 版权方对本软件保留全部未明示授予的权利。
+2. 版权方本人及其指定关联方，可不受本许可证「开源义务」与「非闭源」条款限制，
+   将本软件用于任意闭源或专有产品，无需向第三方支付授权费。
+3. 版权方有权对本软件进行双重许可（dual licensing），包括但不限于向第三方出售
+   商业授权，而不影响社区授权的继续有效。
+4. 除本许可证明示授予的权利外，本软件的一切权利归版权方所有
+   （All Rights Reserved）。
+
+
+四、贡献
+
+除非另有书面约定，你向本软件提交的贡献（含补丁、PR、文档）视为在本许可证条款下
+授予版权方：版权方可将该贡献纳入本软件，并按社区授权与/或商业授权再许可。
+
+
+五、终止
+
+若你违反本许可证，授权自动终止。停止违约并彻底补救后，可经版权方书面同意恢复。
+商业授权的终止条件以商业授权协议为准。
+
+
+六、免责声明与责任限制
+
+本软件按「现状（AS IS）」提供，不附带任何明示或默示担保，包括但不限于适销性、
+特定用途适用性与非侵权。在任何情况下，版权方均不对因使用本软件产生的任何直接、
+间接、附带、特殊、惩戒性或后果性损害承担责任。
+
+
+七、其他
+
+1. 本许可证中英文本不一致时，以中文文本为准。
+2. 「月流水」指与使用本软件的产品/服务直接相关的总收入，不扣除成本；货币为人民币。
+   汇率争议时以授权当月中国人民银行公布的中间价折算。
+3. 本许可证不授予商标权。
+
+English summary (Chinese text controls in case of conflict)
+
+Community grant (gratis): use, modify, and redistribute, provided all
+distributions remain under this same license with complete corresponding
+source (no closed-source products under the community grant).
+
+Commercial license (paid): required for closed-source use. Projects with
+monthly gross revenue exceeding CNY ¥1,000 that wish to use this software in
+closed-source products must obtain a paid commercial license from the
+copyright holder.
+
+Copyright holder exception: the copyright holder may use this software in
+closed-source / proprietary products without the open-source obligations above,
+and may dual-license the software commercially.
+
+Except for rights expressly granted herein, all rights are reserved by the
+copyright holder.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.

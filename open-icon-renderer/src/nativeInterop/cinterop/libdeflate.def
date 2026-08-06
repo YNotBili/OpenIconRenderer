@@ -1,0 +1,5 @@
+headers = libdeflate.h
+headerFilter = libdeflate.h
+package = libdeflate
+linkerOpts.linux = -ldeflate
+compilerOpts = -I/usr/include

@@ -1,0 +1,5 @@
+headers = webp/decode.h
+headerFilter = webp/*
+package = libwebp
+linkerOpts.linux = -lwebp
+compilerOpts = -I/usr/include
