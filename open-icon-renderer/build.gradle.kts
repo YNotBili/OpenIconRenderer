@@ -48,21 +48,9 @@ kotlin {
         }
     }
 
-    // linuxX64: unlock popcnt / SSE4.2 / AVX2 for LLVM codegen (default Konan baseline is SSE2).
-    linuxX64 {
-        compilations.configureEach {
-            compileTaskProvider.configure {
-                compilerOptions.freeCompilerArgs.add(
-                    "-Xoverride-konan-properties=" +
-                        "targetCpu.linux_x64=x86-64-v3;" +
-                        "targetCpuFeatures.linux_x64=" +
-                        "+aes,+avx,+avx2,+bmi,+bmi2,+cmov,+crc32,+cx16,+cx8,+fma,+fxsr," +
-                        "+lzcnt,+mmx,+movbe,+pclmul,+popcnt,+rdrnd,+rdseed,+sahf," +
-                        "+sse,+sse2,+sse3,+sse4.1,+sse4.2,+ssse3,+x87,+xsave,+xsaveopt",
-                )
-            }
-        }
-    }
+    // NOTE: Do not force x86-64-v3/AVX feature overrides here when consumed via includeBuild.
+    // Mismatched targetCpuFeatures vs the consuming app's Konan baseline can crash LLVM with
+    // "Do not know how to split the result of this operator!" during release (and even debug) link.
 
     @OptIn(ExperimentalKotlinGradlePluginApi::class)
     compilerOptions {
