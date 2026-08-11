@@ -47,6 +47,18 @@ fun main(args: Array<String>) {
             onceInspect(apkPath)
             return
         }
+        "meta" -> {
+            val apkPath = args.getOrNull(1) ?: error("Usage: ... meta <apk>")
+            val preview = OpenIconRenderer.parseApkPreview(apkPath)
+                ?: error("parseApkPreview failed")
+            val m = preview.metadata
+            println(
+                "pkg=${m.packageName} label=${m.applicationLabel} " +
+                    "v=${m.versionName}(${m.versionCode}) sdk=${m.minSdk}/${m.targetSdk} " +
+                    "abis=${m.architectures} iconBytes=${preview.iconPng?.size ?: 0}",
+            )
+            return
+        }
         "render" -> {
             val apkPath = args.getOrNull(1)
                 ?: error("Usage: ... render <apk> <size> [out.png] [--stages] [--isolate] [--no-mask]")

@@ -36,6 +36,12 @@ class IconSession private constructor(
         )
     }
 
+    /** Package / label / version / SDK / ABIs from the already-open APK ZIP. */
+    fun metadata(): ApkMetadata? {
+        checkOpen()
+        return extractor.parseMetadata()
+    }
+
     /**
      * Resolve launcher icon into a size-independent recording (ZIP/ARSC once).
      * Subsequent [extract] calls reuse it when density/sdk/adaptive prefs match.

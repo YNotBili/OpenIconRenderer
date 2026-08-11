@@ -1,5 +1,6 @@
 package com.lingmarket.openiconrenderer.apk
 
+import com.lingmarket.openiconrenderer.api.ApkMetadata
 import com.lingmarket.openiconrenderer.api.IconExtractOptions
 import com.lingmarket.openiconrenderer.api.IconMask
 import com.lingmarket.openiconrenderer.arsc.ResolvedResource
@@ -129,6 +130,8 @@ internal class ApkIconExtractor(
         } ?: findRasterFallbackPath() ?: findAdaptiveIconXmlInZip()
         return IconInspection(iconRef, resolvedPath)
     }
+
+    fun parseMetadata(): ApkMetadata? = ApkMetadataParser(zip, resources).parse()
 
     private fun findAdaptiveIconXmlInZip(): String? {
         // Last-resort only: scanning every res/*.xml is very expensive on large APKs.

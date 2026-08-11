@@ -66,6 +66,36 @@ object OpenIconRenderer {
         options: IconExtractOptions = IconExtractOptions(),
     ): ByteArray? = extractLauncherIcon(apkPath, options)?.pngBytes
 
+    /**
+     * Parse package / label / version / SDK / ABIs (no aapt).
+     * Path-based: mmap/on-demand I/O.
+     */
+    fun parseApkMetadata(apkPath: String): ApkMetadata? {
+        openSession(apkPath)?.use { return it.metadata() }
+        return null
+    }
+
+    fun parseApkMetadata(apkBytes: ByteArray): ApkMetadata? {
+        openSession(apkBytes)?.use { return it.metadata() }
+        return null
+    }
+
+    /**
+     * One open of the APK: metadata + launcher PNG.
+     * Prefer this on upload-session create to avoid double ZIP/ARSC work.
+     */
+    fun parseApkPreview(
+        apkPath: String,
+        iconOptions: IconExtractOptions = IconExtractOptions(outputSize = 192),
+    ): ApkPreview? {
+        openSession(apkPath)?.use { session ->
+            val meta = session.metadata() ?: return null
+            val icon = session.extract(iconOptions)?.pngBytes
+            return ApkPreview(meta, icon)
+        }
+        return null
+    }
+
     private fun inspectWith(data: BinaryData): IconInspectionResult? {
         val inspection = ApkIconExtractor(
             data,

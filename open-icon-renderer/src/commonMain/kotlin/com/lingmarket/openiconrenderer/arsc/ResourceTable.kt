@@ -12,6 +12,13 @@ internal sealed class ResolvedResource {
     data class Reference(val resId: Int) : ResolvedResource()
 }
 
+/** Resolve a string resource id to its pool value (application labels, etc.). */
+internal fun ResourceTable.resolveString(resId: Int): String? =
+    resolveReference(resId)
+        .filterIsInstance<ResolvedResource.FilePath>()
+        .map { it.path }
+        .firstOrNull { it.isNotBlank() }
+
 /**
  * Lazy resources.arsc: indexes TYPE chunk locations at construction, resolves individual
  * resource IDs on demand, and decodes global strings only when referenced.
