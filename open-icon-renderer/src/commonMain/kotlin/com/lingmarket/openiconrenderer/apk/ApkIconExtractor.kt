@@ -15,6 +15,7 @@ import com.lingmarket.openiconrenderer.png.PngEncoder
 import com.lingmarket.openiconrenderer.vector.FillPaint
 import com.lingmarket.openiconrenderer.vector.GradientStop
 import com.lingmarket.openiconrenderer.vector.PathDataParser
+import com.lingmarket.openiconrenderer.vector.Affine2
 import com.lingmarket.openiconrenderer.vector.VectorPath
 import com.lingmarket.openiconrenderer.vector.VectorRasterizer
 import com.lingmarket.openiconrenderer.vector.androidColorToArgb
@@ -710,16 +711,13 @@ internal class ApkIconExtractor(
         if (vpW <= 0f || vpH <= 0f) return null
         // Single root <group android:alpha> → true layer opacity (Android offscreen + alpha).
         val only = node.children.singleOrNull()
-        val layerAlpha: Float
-        val pathRoot: XmlNode
-        if (only != null && only.tag == "group") {
-            layerAlpha = (attr(only, "alpha")?.let { parseAndroidFloat(it) } ?: 1f).coerceIn(0f, 1f)
-            pathRoot = only
+        val layerAlpha = if (only != null && only.tag == "group") {
+            (attr(only, "alpha")?.let { parseAndroidFloat(it) } ?: 1f).coerceIn(0f, 1f)
         } else {
-            layerAlpha = 1f
-            pathRoot = node
+            1f
         }
-        val paths = collectVectorPaths(pathRoot)
+        // Walk from the <vector> root so a lone <group> still gets translate/scale/rotate.
+        val paths = collectVectorPaths(node)
         if (paths.isEmpty() || paths.none { it.fill != null }) return null
         return VectorDrawable(paths, vpW, vpH, layerAlpha)
     }
@@ -757,14 +755,19 @@ internal class ApkIconExtractor(
         return resultFromBitmap(bitmap, sourcePath)
     }
 
-    private fun collectVectorPaths(node: XmlNode, out: MutableList<VectorPath> = mutableListOf()): List<VectorPath> {
+    private fun collectVectorPaths(
+        node: XmlNode,
+        matrix: Affine2 = Affine2.IDENTITY,
+        out: MutableList<VectorPath> = mutableListOf(),
+    ): List<VectorPath> {
         for (child in node.children) {
             when (child.tag) {
                 "path" -> {
                     val pathData = attr(child, "pathData") ?: continue
-                    val fill = resolveFillPaint(attr(child, "fillColor"))
+                    val fill = matrix.mapFill(resolveFillPaint(attr(child, "fillColor")))
                     val stroke = attr(child, "strokeColor")?.let { resolveColorValue(it) }
-                    val strokeWidth = attr(child, "strokeWidth")?.let { parseAndroidFloat(it) } ?: 0f
+                    val strokeWidth = (attr(child, "strokeWidth")?.let { parseAndroidFloat(it) } ?: 0f) *
+                        matrix.meanScale()
                     val fillAlpha = attr(child, "fillAlpha")?.let { parseAndroidFloat(it) } ?: 1f
                     val strokeAlpha = attr(child, "strokeAlpha")?.let { parseAndroidFloat(it) } ?: 1f
                     val fillTypeRaw = attr(child, "fillType")?.trim()?.lowercase()
@@ -775,7 +778,7 @@ internal class ApkIconExtractor(
                     }
                     out.add(
                         VectorPath(
-                            PathDataParser.parse(pathData),
+                            matrix.mapCommands(PathDataParser.parse(pathData)),
                             fill,
                             stroke,
                             strokeWidth,
@@ -785,10 +788,21 @@ internal class ApkIconExtractor(
                         ),
                     )
                 }
-                "group" -> collectVectorPaths(child, out)
+                "group" -> collectVectorPaths(child, matrix.compose(groupAffine(child)), out)
             }
         }
         return out
+    }
+
+    private fun groupAffine(node: XmlNode): Affine2 {
+        val translateX = attr(node, "translateX")?.let { parseAndroidFloat(it) } ?: 0f
+        val translateY = attr(node, "translateY")?.let { parseAndroidFloat(it) } ?: 0f
+        val scaleX = attr(node, "scaleX")?.let { parseAndroidFloat(it) } ?: 1f
+        val scaleY = attr(node, "scaleY")?.let { parseAndroidFloat(it) } ?: 1f
+        val rotation = attr(node, "rotation")?.let { parseAndroidFloat(it) } ?: 0f
+        val pivotX = attr(node, "pivotX")?.let { parseAndroidFloat(it) } ?: 0f
+        val pivotY = attr(node, "pivotY")?.let { parseAndroidFloat(it) } ?: 0f
+        return Affine2.androidGroup(translateX, translateY, scaleX, scaleY, rotation, pivotX, pivotY)
     }
 
     private fun resolveFillPaint(ref: String?): FillPaint? {
