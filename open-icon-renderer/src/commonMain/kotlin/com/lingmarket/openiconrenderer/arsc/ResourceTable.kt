@@ -80,6 +80,24 @@ internal class ResourceTable(
 
     fun resolveReference(resId: Int): List<ResolvedResource> = resolveReference(resId, mutableSetOf())
 
+    /**
+     * Resolve a string/label resource id to display text.
+     * Drawable/file paths are ignored when a plain string value is available.
+     */
+    fun resolveString(resId: Int): String? {
+        val values = resolveReference(resId)
+        val texts = values.mapNotNull { (it as? ResolvedResource.FilePath)?.path?.takeIf { p -> p.isNotBlank() } }
+        return texts.firstOrNull { candidate ->
+            val lower = candidate.lowercase()
+            '/' !in candidate &&
+                !lower.endsWith(".xml") &&
+                !lower.endsWith(".png") &&
+                !lower.endsWith(".webp") &&
+                !lower.endsWith(".jpg") &&
+                !lower.startsWith("res")
+        } ?: texts.firstOrNull()
+    }
+
     private fun resolveReference(resId: Int, visited: MutableSet<Int>): List<ResolvedResource> {
         if (!visited.add(resId)) return emptyList()
         val packageId = (resId ushr 24) and 0xFF

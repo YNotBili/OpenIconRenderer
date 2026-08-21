@@ -31,6 +31,10 @@ internal class ApkIconExtractor(
     apkData: BinaryData,
     options: IconExtractOptions,
     stages: StageClock? = null,
+    /** Reuse an already-built ZIP index (e.g. from [ApkMetadataParser]) to avoid a second CD scan. */
+    sharedZip: ZipArchive? = null,
+    /** Reuse a parsed resources.arsc table from the preview/metadata pass. */
+    sharedResources: ResourceTable? = null,
 ) {
     constructor(apkBytes: ByteArray, options: IconExtractOptions) : this(HeapBinaryData(apkBytes), options)
 
@@ -47,12 +51,16 @@ internal class ApkIconExtractor(
     private val outputSize: Int get() = options.outputSize
     private val verbose: Boolean get() = options.verbose
     private val zip: ZipArchive
-    private val resources: ResourceTable? by lazy { loadResourceTable() }
+    private val resources: ResourceTable? by lazy { sharedResources ?: loadResourceTable() }
 
     init {
-        stages?.start("zip")
-        zip = ZipArchive(apkData)
-        stages?.stop()
+        if (sharedZip != null) {
+            zip = sharedZip
+        } else {
+            stages?.start("zip")
+            zip = ZipArchive(apkData)
+            stages?.stop()
+        }
     }
 
     private fun loadResourceTable(): ResourceTable? {
@@ -76,16 +84,18 @@ internal class ApkIconExtractor(
         }
     }
 
-    fun extract(): ExtractResult? {
-        val rec = record() ?: return null
+    fun extract(preferredIconRef: String? = null): ExtractResult? {
+        val rec = record(preferredIconRef) ?: return null
         return renderRecording(rec)
     }
 
     /** Resolve launcher icon into a size-independent [IconRecording] (no raster at outputSize). */
-    fun record(): IconRecording? {
+    fun record(preferredIconRef: String? = null): IconRecording? {
         stages?.start("resolve")
         return try {
-            val iconRef = findManifestIcon() ?: findManifestIconFromAlias()
+            val iconRef = preferredIconRef?.takeIf { it.isNotBlank() }
+                ?: findManifestIcon()
+                ?: findManifestIconFromAlias()
             when {
                 iconRef != null -> {
                     trace("manifest icon: $iconRef")

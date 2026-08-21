@@ -1,11 +1,13 @@
 package com.lingmarket.openiconrenderer.api
 
-import com.lingmarket.openiconrenderer.apk.ApksExtractor
 import com.lingmarket.openiconrenderer.apk.ApkIconExtractor
+import com.lingmarket.openiconrenderer.apk.ApkMetadataParser
+import com.lingmarket.openiconrenderer.apk.ApksExtractor
 import com.lingmarket.openiconrenderer.platform.openBinaryData
 import com.lingmarket.openiconrenderer.util.BinaryData
 import com.lingmarket.openiconrenderer.util.HeapBinaryData
 import com.lingmarket.openiconrenderer.util.StageClock
+import com.lingmarket.openiconrenderer.zip.ZipArchive
 
 object OpenIconRenderer {
     fun openSession(apkPath: String): IconSession? = IconSession.open(apkPath)
@@ -65,6 +67,75 @@ object OpenIconRenderer {
         apkPath: String,
         options: IconExtractOptions = IconExtractOptions(),
     ): ByteArray? = extractLauncherIcon(apkPath, options)?.pngBytes
+
+    /**
+     * Parse package / version / SDK / ABI / permissions and the launcher icon in **one** ZIP session.
+     * Returns null only when the Manifest cannot yield a package name.
+     * Permission extraction failures yield an empty permission list (never null metadata).
+     */
+    fun parseApkPreview(
+        apkPath: String,
+        options: IconExtractOptions = IconExtractOptions(),
+    ): ApkPreview? {
+        val data = openNormalizedApk(apkPath) ?: return null
+        return try {
+            parsePreviewWith(data, options, includeIcon = true)
+        } finally {
+            data.close()
+        }
+    }
+
+    fun parseApkPreview(
+        apkBytes: ByteArray,
+        options: IconExtractOptions = IconExtractOptions(),
+    ): ApkPreview? {
+        val data = normalizeApkData(HeapBinaryData(apkBytes)) ?: return null
+        return try {
+            parsePreviewWith(data, options, includeIcon = true)
+        } finally {
+            data.close()
+        }
+    }
+
+    /** Manifest / ABI / permissions only — skips launcher icon raster (cheapest upload validation path). */
+    fun parseApkMetadata(apkPath: String): ApkMetadata? {
+        val data = openNormalizedApk(apkPath) ?: return null
+        return try {
+            parsePreviewWith(data, IconExtractOptions(outputSize = 1), includeIcon = false)?.metadata
+        } finally {
+            data.close()
+        }
+    }
+
+    fun parseApkMetadata(apkBytes: ByteArray): ApkMetadata? {
+        val data = normalizeApkData(HeapBinaryData(apkBytes)) ?: return null
+        return try {
+            parsePreviewWith(data, IconExtractOptions(outputSize = 1), includeIcon = false)?.metadata
+        } finally {
+            data.close()
+        }
+    }
+
+    private fun parsePreviewWith(
+        data: BinaryData,
+        options: IconExtractOptions,
+        includeIcon: Boolean,
+    ): ApkPreview? {
+        val zip = ZipArchive(data)
+        val parsed = ApkMetadataParser.parseWithResources(zip) ?: return null
+        if (!includeIcon) {
+            return ApkPreview(metadata = parsed.metadata, iconPng = null)
+        }
+        val iconPng = runCatching {
+            ApkIconExtractor(
+                apkData = data,
+                options = options,
+                sharedZip = zip,
+                sharedResources = parsed.resources,
+            ).extract(preferredIconRef = parsed.metadata.launcherIconRef)?.toPng()
+        }.getOrNull()
+        return ApkPreview(metadata = parsed.metadata, iconPng = iconPng)
+    }
 
     private fun inspectWith(data: BinaryData): IconInspectionResult? {
         val inspection = ApkIconExtractor(

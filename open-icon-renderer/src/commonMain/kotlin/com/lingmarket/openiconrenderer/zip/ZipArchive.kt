@@ -196,6 +196,8 @@ internal class ZipArchive(private val data: BinaryData) {
                 return true
             }
             if (nameLen >= 7 && matchAscii(data, nameStart, "assets/")) return true
+            // Native ABI folders (`lib/arm64-v8a/...`) — needed by ApkMetadataParser.
+            if (nameLen >= 4 && matchAscii(data, nameStart, "lib/")) return true
             return false
         }
 
