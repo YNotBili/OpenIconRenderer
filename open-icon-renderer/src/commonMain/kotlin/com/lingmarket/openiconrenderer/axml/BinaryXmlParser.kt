@@ -28,6 +28,7 @@ internal object AxmlTypes {
     const val TYPE_REFERENCE = 0x01
     const val TYPE_INT_DEC = 0x10
     const val TYPE_INT_HEX = 0x11
+    const val TYPE_INT_BOOLEAN = 0x12
 }
 
 internal data class XmlNode(
@@ -200,6 +201,7 @@ internal class BinaryXmlParser(private val data: ByteArray) {
         const val TYPE_REFERENCE = AxmlTypes.TYPE_REFERENCE
         const val TYPE_INT_DEC = AxmlTypes.TYPE_INT_DEC
         const val TYPE_INT_HEX = AxmlTypes.TYPE_INT_HEX
+        const val TYPE_INT_BOOLEAN = AxmlTypes.TYPE_INT_BOOLEAN
 
         fun androidAttr(node: XmlNode, name: String): String? {
             for (attr in node.attributes) {
