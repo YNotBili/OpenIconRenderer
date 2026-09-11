@@ -100,24 +100,40 @@ internal object RgbaCanvas {
         val dst = out.pixels
 
         // Fixed-point bilinear (16.16): each output pixel maps in O(1) to a 2x2 neighborhood.
+        // Output pixel x covers source range [x*ratio, (x+1)*ratio); its sampling centre is
+        // x*ratio + ratio/2, and the -32768 is the half-texel offset that puts the origin at the
+        // centre of texel 0 rather than its left edge:
+        //
+        //     src = (x + 0.5) * sw / tw - 0.5
+        //
+        // Dropping the +ratio/2 term (as this used to) leaves the sample sitting on the *left edge*
+        // of the destination footprint, so at any downscale ratio each output pixel reads mostly a
+        // single corner texel instead of averaging the covered ones. That is what dragged edge
+        // colour inwards and, combined with the straight-alpha assumptions in lerp4Fixed, surfaced
+        // as a light rim on the masked icon.
         val xRatio = ((sw shl 16) / targetWidth).coerceAtLeast(1)
         val yRatio = ((sh shl 16) / targetHeight).coerceAtLeast(1)
+        val xBias = xRatio / 2 - 32768
+        val yBias = yRatio / 2 - 32768
         val maxX = sw - 1
         val maxY = sh - 1
 
         for (y in 0 until targetHeight) {
-            val sy = y * yRatio - 32768
-            val y0 = (sy ushr 16).coerceIn(0, maxY)
+            val sy = y * yRatio + yBias
+            // `shr` (arithmetic) floors negatives toward -infinity, which is what the half-texel
+            // offset needs; `ushr` would read the sign bit as data and decode a negative sample as
+            // 65535 before the clamp, snapping it to the last row/column.
+            val y0 = (sy shr 16).coerceIn(0, maxY)
             val y1 = (y0 + 1).coerceAtMost(maxY)
-            val yFrac = (sy and 0xFFFF).coerceIn(0, 65535)
+            val yFrac = (sy - (y0 shl 16)).coerceIn(0, 65535)
             val yRow0 = y0 * sw
             val yRow1 = y1 * sw
             val dstRow = y * targetWidth
             for (x in 0 until targetWidth) {
-                val sx = x * xRatio - 32768
-                val x0 = (sx ushr 16).coerceIn(0, maxX)
+                val sx = x * xRatio + xBias
+                val x0 = (sx shr 16).coerceIn(0, maxX)
                 val x1 = (x0 + 1).coerceAtMost(maxX)
-                val xFrac = (sx and 0xFFFF).coerceIn(0, 65535)
+                val xFrac = (sx - (x0 shl 16)).coerceIn(0, 65535)
                 dst[dstRow + x] = lerp4Fixed(
                     src[yRow0 + x0], src[yRow0 + x1],
                     src[yRow1 + x0], src[yRow1 + x1],
@@ -175,9 +191,19 @@ internal object RgbaCanvas {
      * pipelines this renderer is compared against.
      *
      * Accumulators are Long: weights sum to 65536^2 and channels reach 255, so the intermediate
-     * channel*alpha*weight product needs more than 32 bits.
+     * channel*alpha*weight product needs more than 32 bits. The alpha result is divided by the same
+     * 65536^2 total weight (not shifted by 16), otherwise the interpolated alpha comes out scaled by
+     * 65536 and the final clamp silently pins it to 255.
      */
     private fun lerp4Fixed(c00: Int, c10: Int, c01: Int, c11: Int, fx: Int, fy: Int): Int {
+        // Fast path: all four taps identical. That is the overwhelmingly common case for flat fills
+        // and for the interior of a rendered glyph, and it short-circuits all the fixed-point work.
+        // Fully transparent taps must not short-circuit: their stored RGB is meaningless (encoders
+        // usually write white) and callers rely on the result being a clean zero.
+        if (c00 == c10 && c00 == c01 && c00 == c11) {
+            return if ((c00 ushr 24) == 0) 0 else c00
+        }
+
         val w00 = (65536L - fx) * (65536L - fy)
         val w10 = fx.toLong() * (65536L - fy)
         val w01 = (65536L - fx) * fy
@@ -189,8 +215,15 @@ internal object RgbaCanvas {
         val a11 = ((c11 ushr 24) and 0xFF).toLong() * w11
         val aSum = a00 + a10 + a01 + a11
         if (aSum == 0L) return 0
+        // Total weight is 65536^2; dividing normalises the alpha, and the scaled aSum doubles as
+        // the denominator that unpremultiplies the colour channels below.
+        val totalWeight = w00 + w10 + w01 + w11
+        val alpha = ((aSum + totalWeight / 2) / totalWeight).toInt().coerceIn(0, 255)
 
-        // Premultiplied channel accumulation, then unpremultiply by the interpolated alpha.
+        // Premultiplied channel accumulation, then unpremultiply. `aSum` is the weight-scaled
+        // alpha, so dividing by it is equivalent to dividing by (alpha * totalWeight) and keeps the
+        // ratio exact; the three Long divisions only run for genuinely mixed taps, since identical
+        // taps already returned above.
         fun channel(shift: Int): Int {
             val p00 = ((c00 shr shift) and 0xFF).toLong() * ((c00 ushr 24) and 0xFF)
             val p10 = ((c10 shr shift) and 0xFF).toLong() * ((c10 ushr 24) and 0xFF)
@@ -203,7 +236,6 @@ internal object RgbaCanvas {
         val r = channel(16)
         val g = channel(8)
         val b = channel(0)
-        val alpha = ((aSum + 32768L) ushr 16).toInt().coerceIn(0, 255)
         return (alpha shl 24) or (r shl 16) or (g shl 8) or b
     }
 
