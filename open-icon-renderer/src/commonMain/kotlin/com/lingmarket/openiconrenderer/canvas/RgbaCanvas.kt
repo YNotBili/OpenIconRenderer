@@ -164,10 +164,47 @@ internal object RgbaCanvas {
         return (outA shl 24) or (r.coerceIn(0, 255) shl 16) or (g.coerceIn(0, 255) shl 8) or b.coerceIn(0, 255)
     }
 
+    /**
+     * Bilinear step over four straight-alpha ARGB samples.
+     *
+     * Channels are interpolated in premultiplied space, then divided back out by the interpolated
+     * alpha. A plain per-channel lerp would mix in the RGB of fully transparent pixels, whose
+     * colour is arbitrary (white for most encoders, all-zero for freshly cleared buffers); around a
+     * mask rim that drags a light halo inwards and shows up as a white edge after downscaling.
+     * Premultiplying makes transparent texels contribute no colour, which matches the reference
+     * pipelines this renderer is compared against.
+     *
+     * Accumulators are Long: weights sum to 65536^2 and channels reach 255, so the intermediate
+     * channel*alpha*weight product needs more than 32 bits.
+     */
     private fun lerp4Fixed(c00: Int, c10: Int, c01: Int, c11: Int, fx: Int, fy: Int): Int {
-        val top = lerpFixed(c00, c10, fx)
-        val bottom = lerpFixed(c01, c11, fx)
-        return lerpFixed(top, bottom, fy)
+        val w00 = (65536L - fx) * (65536L - fy)
+        val w10 = fx.toLong() * (65536L - fy)
+        val w01 = (65536L - fx) * fy
+        val w11 = fx.toLong() * fy
+
+        val a00 = ((c00 ushr 24) and 0xFF).toLong() * w00
+        val a10 = ((c10 ushr 24) and 0xFF).toLong() * w10
+        val a01 = ((c01 ushr 24) and 0xFF).toLong() * w01
+        val a11 = ((c11 ushr 24) and 0xFF).toLong() * w11
+        val aSum = a00 + a10 + a01 + a11
+        if (aSum == 0L) return 0
+
+        // Premultiplied channel accumulation, then unpremultiply by the interpolated alpha.
+        fun channel(shift: Int): Int {
+            val p00 = ((c00 shr shift) and 0xFF).toLong() * ((c00 ushr 24) and 0xFF)
+            val p10 = ((c10 shr shift) and 0xFF).toLong() * ((c10 ushr 24) and 0xFF)
+            val p01 = ((c01 shr shift) and 0xFF).toLong() * ((c01 ushr 24) and 0xFF)
+            val p11 = ((c11 shr shift) and 0xFF).toLong() * ((c11 ushr 24) and 0xFF)
+            val acc = p00 * w00 + p10 * w10 + p01 * w01 + p11 * w11
+            return (acc / aSum).toInt().coerceIn(0, 255)
+        }
+
+        val r = channel(16)
+        val g = channel(8)
+        val b = channel(0)
+        val alpha = ((aSum + 32768L) ushr 16).toInt().coerceIn(0, 255)
+        return (alpha shl 24) or (r shl 16) or (g shl 8) or b
     }
 
     private fun lerpFixed(a: Int, b: Int, t: Int): Int {

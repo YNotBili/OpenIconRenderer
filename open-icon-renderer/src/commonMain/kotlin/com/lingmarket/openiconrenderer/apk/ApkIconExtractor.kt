@@ -993,9 +993,18 @@ internal class ApkIconExtractor(
         val dist = sqrt(dx * dx + dy2)
         val cover = ((rOuter - dist) / feather).coerceIn(0f, 1f)
         val s = cover * cover * (3f - 2f * cover)
+        if (s >= 1f) return // Fully inside: keep pixel untouched.
         val c = pixels[idx]
-        val a = (((c ushr 24) and 0xFF) * s + 0.5f).toInt().coerceIn(0, 255)
-        pixels[idx] = (a shl 24) or (c and 0x00FFFFFF)
+        val a0 = (c ushr 24) and 0xFF
+        if (a0 == 0) return // Already transparent: nothing to fade.
+        // Straight (non-premultiplied) alpha fade must scale RGB together with A.
+        // Scaling A alone leaves RGB at full intensity, so viewers compositing onto a
+        // light background blow the rim out to a white/grey fringe.
+        val a = (a0 * s + 0.5f).toInt().coerceIn(0, 255)
+        val r = (((c ushr 16) and 0xFF) * s + 0.5f).toInt().coerceIn(0, 255)
+        val g = (((c ushr 8) and 0xFF) * s + 0.5f).toInt().coerceIn(0, 255)
+        val b = ((c and 0xFF) * s + 0.5f).toInt().coerceIn(0, 255)
+        pixels[idx] = (a shl 24) or (r shl 16) or (g shl 8) or b
     }
 
     private fun sortByDpi(paths: List<String>): List<String> {
