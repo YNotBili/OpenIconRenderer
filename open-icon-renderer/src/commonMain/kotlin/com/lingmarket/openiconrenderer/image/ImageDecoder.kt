@@ -18,34 +18,13 @@ internal object ImageDecoder {
 }
 
 internal object JpegDecoder {
-    fun decode(data: ByteArray): RgbaBitmap? {
-        var i = 2
-        var width = 0
-        var height = 0
-        val blocks = ArrayList<ByteArray>()
-        while (i + 4 < data.size) {
-            if (data[i] != 0xFF.toByte()) {
-                i++
-                continue
-            }
-            val marker = data[i + 1].toInt() and 0xFF
-            if (marker == 0xD9) break
-            if (marker == 0xDA) {
-                val scan = data.copyOfRange(i + 2, data.size - 2)
-                blocks.add(scan)
-                break
-            }
-            val len = ((data[i + 2].toInt() and 0xFF) shl 8) or (data[i + 3].toInt() and 0xFF)
-            if (marker == 0xC0 || marker == 0xC2) {
-                height = ((data[i + 5].toInt() and 0xFF) shl 8) or (data[i + 6].toInt() and 0xFF)
-                width = ((data[i + 7].toInt() and 0xFF) shl 8) or (data[i + 8].toInt() and 0xFF)
-            }
-            i += 2 + len
-        }
-        if (width <= 0 || height <= 0) return null
-        // Fallback: produce a neutral placeholder when full Huffman decode is unavailable
-        return RgbaBitmap.create(width, height, 0xFF808080.toInt())
-    }
+    /**
+     * Baseline / extended-sequential JPEG (SOF0/SOF1), interleaved or progressive-free,
+     * 1 (gray) / 3 (YCbCr) / 4 (CMYK) components, 4:4:4 / 4:2:2 / 4:2:0 / gray sampling.
+     * Returns null for anything unsupported (arithmetic coding, 12-bit, progressive SOF2,
+     * hierarchical) — never a fake-color placeholder, so callers can fall back honestly.
+     */
+    fun decode(data: ByteArray): RgbaBitmap? = runCatching { JpegImage(data).decode() }.getOrNull()
 }
 
 internal object WebpDecoder {

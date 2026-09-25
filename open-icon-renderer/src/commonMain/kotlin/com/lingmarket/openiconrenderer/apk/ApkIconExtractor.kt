@@ -430,10 +430,12 @@ internal class ApkIconExtractor(
                 }
                 "foreground" -> {
                     val vec = tryResolveVectorElement(child, depth + 1)
+                    trace("  adaptive fg: vec=${vec?.let { "${it.paths.size} paths vp=${it.vpW}x${it.vpH}" } ?: "NULL"}")
                     fg = if (vec != null) {
                         IconRecording.Foreground.Vector(vec.paths, vec.vpW, vec.vpH, vec.layerAlpha)
                     } else {
                         val bmp = resolveDrawableElement(child, depth + 1)?.bitmap
+                        trace("  adaptive fg bitmap fallback: ${bmp?.let { "${it.width}x${it.height}" } ?: "NULL"}")
                         if (bmp != null) IconRecording.Foreground.Bitmap(bmp)
                         else IconRecording.Foreground.None
                     }
@@ -715,6 +717,9 @@ internal class ApkIconExtractor(
         val vpW = attr(node, "viewportWidth")?.let { parseAndroidFloat(it) } ?: return null
         val vpH = attr(node, "viewportHeight")?.let { parseAndroidFloat(it) } ?: return null
         if (vpW <= 0f || vpH <= 0f) return null
+        if (options.verbose) {
+            trace("  vectorFromNode: vp=${vpW}x${vpH} paths=${node.children.count { it.tag == "path" }}")
+        }
         // Single root <group android:alpha> → true layer opacity (Android offscreen + alpha).
         val only = node.children.singleOrNull()
         val layerAlpha = if (only != null && only.tag == "group") {
@@ -1055,6 +1060,18 @@ internal class ApkIconExtractor(
                         "#${tv.data.toUInt().toString(16).padStart(8, '0')}"
                     TYPE_INT_COLOR_RGB8 ->
                         "#ff${(tv.data and 0xFFFFFF).toUInt().toString(16).padStart(6, '0')}"
+                    // aapt2 packs losslessly-reducible colors into 4-bit nibbles:
+                    // TYPE_INT_COLOR_ARGB4 (0x1e) / TYPE_INT_COLOR_RGB4 (0x1f),
+                    // data & 0xFFFF = (a<<12)|(r<<8)|(g<<4)|b, each nibble expanded x17.
+                    TYPE_INT_COLOR_ARGB4, TYPE_INT_COLOR_RGB4 -> {
+                        val p = tv.data and 0xFFFF
+                        fun ex(n: Int) = (n * 17)
+                        val a = ex((p ushr 12) and 0xF)
+                        val r = ex((p ushr 8) and 0xF)
+                        val g = ex((p ushr 4) and 0xF)
+                        val b = ex(p and 0xF)
+                        "#" + ((a shl 24) or (r shl 16) or (g shl 8) or b).toUInt().toString(16).padStart(8, '0')
+                    }
                     BinaryXmlParser.TYPE_INT_DEC, BinaryXmlParser.TYPE_INT_HEX -> tv.data.toString()
                     else -> attribute.rawValue?.takeIf { it.isNotBlank() } ?: tv.data.toString()
                 }
@@ -1079,6 +1096,8 @@ internal class ApkIconExtractor(
         private const val TYPE_FLOAT = 0x04
         private const val TYPE_INT_COLOR_ARGB8 = 0x1c
         private const val TYPE_INT_COLOR_RGB8 = 0x1d
+        private const val TYPE_INT_COLOR_ARGB4 = 0x1e
+        private const val TYPE_INT_COLOR_RGB4 = 0x1f
 
         private val DPI_RANK = linkedMapOf(
             "xxxhdpi" to 0,
