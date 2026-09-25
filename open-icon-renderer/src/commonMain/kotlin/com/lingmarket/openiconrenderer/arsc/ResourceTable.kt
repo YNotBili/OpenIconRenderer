@@ -113,9 +113,12 @@ internal class ResourceTable(
 
     private fun indexPackage(reader: BinaryDataReader, chunkStart: Int, chunkSize: Int) {
         val packageId = reader.readU32LE()
-        // Skip name[128 utf16] + typeStrings + lastPublicType + keyStrings + lastPublicKey (+ typeIdOffset)
-        // ResTable_package header is 288 bytes from chunkStart (incl. chunk header 8 + id 4 + name 256 + 5*4)
-        reader.seek(chunkStart + 288)
+        // Inner chunks start after the package header. Modern aapt emits headerSize=288
+        // (extra typeIdOffset field); pre-Marshmallow layouts use 284. Trust the chunk's
+        // own u16 headerSize — hardcoding 288 skips 4 bytes into the first inner chunk on
+        // old APKs, garbage-sizing it and silently dropping ALL type chunks.
+        val headerSz = u16At(chunkStart + 2)
+        reader.seek(chunkStart + if (headerSz >= 268) headerSz else 288)
         val packageEnd = chunkStart + chunkSize
         while (reader.position + 8 <= packageEnd) {
             val innerStart = reader.position

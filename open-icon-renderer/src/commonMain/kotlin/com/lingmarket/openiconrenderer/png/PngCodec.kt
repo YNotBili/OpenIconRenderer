@@ -17,12 +17,16 @@ internal object PngDecoder {
         if (data.size < 8 || !data.copyOfRange(0, 8).contentEquals(PNG_SIGNATURE)) return null
         var width = 0
         var height = 0
-        var colorType = 0
+        var colorType = -1
         var bitDepth = 8
+        var palette: IntArray? = null       // 0xFFRRGGBB per entry
+        var paletteAlpha: ByteArray? = null // tRNS alpha for palette indices
+        var colorKey: IntArray? = null      // tRNS key in 16-bit normalized samples
         val idatChunks = ArrayList<ByteArray>()
         var offset = 8
         while (offset + 8 <= data.size) {
             val length = data.u32BE(offset)
+            if (length < 0 || offset + 12L > data.size.toLong() || offset + 12 + length > data.size) break
             val type = data.copyOfRange(offset + 4, offset + 8).decodeToString()
             val chunkData = data.copyOfRange(offset + 8, offset + 8 + length)
             when (type) {
@@ -32,34 +36,152 @@ internal object PngDecoder {
                     bitDepth = chunkData[8].toInt() and 0xFF
                     colorType = chunkData[9].toInt() and 0xFF
                 }
+                "PLTE" -> {
+                    val n = chunkData.size / 3
+                    palette = IntArray(n) { i ->
+                        val o = i * 3
+                        (0xFF shl 24) or
+                            ((chunkData[o].toInt() and 0xFF) shl 16) or
+                            ((chunkData[o + 1].toInt() and 0xFF) shl 8) or
+                            (chunkData[o + 2].toInt() and 0xFF)
+                    }
+                }
+                "tRNS" -> when (colorType) {
+                    3 -> paletteAlpha = chunkData.copyOf()
+                    0 -> if (chunkData.size >= 2) {
+                        colorKey = intArrayOf(sample16(chunkData[0].toInt() and 0xFF, chunkData[1].toInt() and 0xFF))
+                    }
+                    2 -> if (chunkData.size >= 6) {
+                        colorKey = intArrayOf(
+                            sample16(chunkData[0].toInt() and 0xFF, chunkData[1].toInt() and 0xFF),
+                            sample16(chunkData[2].toInt() and 0xFF, chunkData[3].toInt() and 0xFF),
+                            sample16(chunkData[4].toInt() and 0xFF, chunkData[5].toInt() and 0xFF),
+                        )
+                    }
+                    else -> {}
+                }
                 "IDAT" -> idatChunks.add(chunkData)
                 "IEND" -> break
             }
             offset += 12 + length
         }
-        if (width <= 0 || height <= 0 || colorType !in setOf(0, 2, 6) || bitDepth != 8) return null
-        val compressed = idatChunks.reduce { acc, bytes -> acc + bytes }
-        val deflated = unwrapZlib(compressed)
-        val inflated = inflateRawDeflate(deflated)
-        val bpp = when (colorType) {
-            0 -> 1
-            2 -> 3
-            6 -> 4
+        val allowedDepths = when (colorType) {
+            0 -> byteArrayOf(1, 2, 4, 8, 16)   // grayscale
+            2 -> byteArrayOf(8, 16)            // RGB
+            3 -> byteArrayOf(1, 2, 4, 8)       // palette
+            4 -> byteArrayOf(8, 16)            // gray + alpha
+            6 -> byteArrayOf(8, 16)            // RGBA
             else -> return null
         }
-        val rowBytes = width * bpp
+        if (width <= 0 || height <= 0 || bitDepth.toByte() !in allowedDepths) return null
+        if (colorType == 3 && palette == null) return null
+        val compressed = idatChunks.reduce { acc, bytes -> acc + bytes }
+        val deflated = unwrapZlib(compressed)
+        val inflated = runCatching { inflateRawDeflate(deflated) }.getOrNull() ?: return null
+        val samples = when (colorType) { 0 -> 1; 3 -> 1; 2 -> 3; 4 -> 2; 6 -> 4; else -> return null }
+        val bitsPerPixel = samples * bitDepth
+        val bpp = (bitsPerPixel / 8).coerceAtLeast(1)
+        val rowBytes = (width * bitsPerPixel + 7) / 8
         val pixels = IntArray(width * height)
         var inPos = 0
         var prevRow = ByteArray(rowBytes)
         for (y in 0 until height) {
+            if (inPos + 1 + rowBytes > inflated.size) return null
             val filter = inflated[inPos++].toInt() and 0xFF
             val row = inflated.copyOfRange(inPos, inPos + rowBytes)
             inPos += rowBytes
             unfilter(filter, row, prevRow, bpp)
-            decodeRow(row, pixels, y, width, colorType)
+            unpackRow(row, pixels, y, width, colorType, bitDepth, palette, paletteAlpha, colorKey)
             prevRow = row
         }
         return RgbaBitmap(width, height, pixels)
+    }
+
+    private fun sample16(hi: Int, lo: Int): Int = (hi shl 8) or lo
+
+    @Suppress("LongParameterList")
+    private fun unpackRow(
+        row: ByteArray,
+        pixels: IntArray,
+        y: Int,
+        width: Int,
+        colorType: Int,
+        bitDepth: Int,
+        palette: IntArray?,
+        paletteAlpha: ByteArray?,
+        colorKey: IntArray?,
+    ) {
+        val base = y * width
+        val maxSample = (1 shl bitDepth) - 1
+        when (colorType) {
+            3 -> {
+                val pal = palette ?: return
+                for (x in 0 until width) {
+                    val idx = readBits(row, x * bitDepth, bitDepth)
+                    val rgb = pal[idx.coerceAtMost(pal.lastIndex)] and 0x00FFFFFF
+                    val a = paletteAlpha?.getOrNull(idx)?.toInt()?.and(0xFF) ?: 0xFF
+                    pixels[base + x] = (a shl 24) or rgb
+                }
+            }
+            0 -> {
+                for (x in 0 until width) {
+                    val v = readBits(row, x * bitDepth, bitDepth)
+                    val gray = if (bitDepth >= 8) v shr (bitDepth - 8) else v * 255 / maxSample.coerceAtLeast(1)
+                    val key = colorKey != null && colorKey[0] == expand16(v, bitDepth)
+                    pixels[base + x] = (if (key) 0 else 0xFF shl 24) or (gray shl 16) or (gray shl 8) or gray
+                }
+            }
+            4 -> for (x in 0 until width) {
+                val vp = x * bitDepth * 2
+                val g = sample8(row, vp, bitDepth)
+                val a = sample8(row, vp + bitDepth, bitDepth)
+                pixels[base + x] = (a shl 24) or (g shl 16) or (g shl 8) or g
+            }
+            2 -> for (x in 0 until width) {
+                val o = x * bitDepth * 3
+                val r = sample8(row, o, bitDepth)
+                val g = sample8(row, o + bitDepth, bitDepth)
+                val b = sample8(row, o + bitDepth * 2, bitDepth)
+                val key = colorKey != null &&
+                    colorKey[0] == expand16(readBits(row, o, bitDepth), bitDepth) &&
+                    colorKey[1] == expand16(readBits(row, o + bitDepth, bitDepth), bitDepth) &&
+                    colorKey[2] == expand16(readBits(row, o + bitDepth * 2, bitDepth), bitDepth)
+                pixels[base + x] = (if (key) 0 else 0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            }
+            6 -> for (x in 0 until width) {
+                val o = x * bitDepth * 4
+                val r = sample8(row, o, bitDepth)
+                val g = sample8(row, o + bitDepth, bitDepth)
+                val b = sample8(row, o + bitDepth * 2, bitDepth)
+                val a = sample8(row, o + bitDepth * 3, bitDepth)
+                pixels[base + x] = (a shl 24) or (r shl 16) or (g shl 8) or b
+            }
+        }
+    }
+
+    /** Reads one sample at [bitPos] (MSB-first sub-byte packing) scaled to 8-bit. */
+    private fun sample8(row: ByteArray, bitPos: Int, bitDepth: Int): Int {
+        val v = readBits(row, bitPos, bitDepth)
+        return when {
+            bitDepth == 8 -> v
+            bitDepth == 16 -> (v ushr 8) and 0xFF
+            else -> v * 255 / ((1 shl bitDepth) - 1)
+        }
+    }
+
+    /** Normalizes a [bitDepth]-bit sample to the 16-bit domain (tRNS comparisons). */
+    private fun expand16(v: Int, bitDepth: Int): Int =
+        if (bitDepth == 16) v else v * 65535 / ((1 shl bitDepth) - 1)
+
+    private fun readBits(row: ByteArray, bitPos: Int, bits: Int): Int {
+        var v = 0
+        var p = bitPos
+        for (i in 0 until bits) {
+            val byte = row[p ushr 3].toInt() and 0xFF
+            v = (v shl 1) or ((byte ushr (7 - (p and 7))) and 1)
+            p++
+        }
+        return v
     }
 
     private fun unfilter(filter: Int, row: ByteArray, prev: ByteArray, bpp: Int) {
@@ -92,37 +214,18 @@ internal object PngDecoder {
         }
     }
 
-    private fun decodeRow(row: ByteArray, pixels: IntArray, y: Int, width: Int, colorType: Int) {
-        var pos = 0
-        for (x in 0 until width) {
-            pixels[y * width + x] = when (colorType) {
-                6 -> {
-                    val r = row[pos++].toInt() and 0xFF
-                    val g = row[pos++].toInt() and 0xFF
-                    val b = row[pos++].toInt() and 0xFF
-                    val a = row[pos++].toInt() and 0xFF
-                    (a shl 24) or (r shl 16) or (g shl 8) or b
-                }
-                2 -> {
-                    val r = row[pos++].toInt() and 0xFF
-                    val g = row[pos++].toInt() and 0xFF
-                    val b = row[pos++].toInt() and 0xFF
-                    (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-                }
-                else -> {
-                    val v = row[pos++].toInt() and 0xFF
-                    (0xFF shl 24) or (v shl 16) or (v shl 8) or v
-                }
-            }
-        }
-    }
-
     private val PNG_SIGNATURE = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
 
     private fun unwrapZlib(data: ByteArray): ByteArray {
         if (data.size < 6) return data
-        if ((data[0].toInt() and 0xFF) != 0x78) return data
-        return data.copyOfRange(2, data.size - 4)
+        val cmf = data[0].toInt() and 0xFF
+        val flg = data[1].toInt() and 0xFF
+        // Proper zlib header check (CM=8 method + checksum of CMF/FLG mod 31) — the old
+        // "0x78 prefix" test missed other window classes and fed headered bytes raw.
+        if ((cmf and 0x0F) == 8 && ((cmf shl 8) or flg) % 31 == 0) {
+            return data.copyOfRange(2, data.size - 4)
+        }
+        return data
     }
 }
 

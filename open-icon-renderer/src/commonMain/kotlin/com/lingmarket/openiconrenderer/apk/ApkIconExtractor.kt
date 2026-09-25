@@ -551,19 +551,25 @@ internal class ApkIconExtractor(
         val colors = configs.filterIsInstance<ResolvedResource.Color>()
         val xmlPaths = paths.filter { it.endsWith(".xml") }
         val rasterPaths = paths.filter { !it.endsWith(".xml") }
+        if (options.verbose) trace("  resId=0x${resId.toString(16)}: configs=${configs.size} paths=$paths colors=${colors.size}")
         val ordered = if (options.preferAdaptive) {
             sortByDpi(xmlPaths) + sortByDpi(rasterPaths)
         } else {
             sortByDpi(rasterPaths) + sortByDpi(xmlPaths)
         }
         for (path in ordered) {
-            if (!zip.contains(path)) continue
+            if (!zip.contains(path)) {
+                if (options.verbose) trace("  miss: $path not in zip")
+                continue
+            }
             if (path.endsWith(".xml")) {
                 recordXmlDrawable(path, depth + 1, iconRef)?.let { return it }
+                if (options.verbose) trace("  xml fail: $path")
             } else {
                 renderRaster(path)?.let {
                     return IconRecording.Raster(iconRef, it.sourcePath, it.bitmap)
                 }
+                if (options.verbose) trace("  raster decode fail: $path")
             }
         }
         for (color in colors) {
